@@ -150,8 +150,9 @@ class DirectionSolver:
         if not place:
             place = self._me
         return place not in self._board.get_barriers() and \
-               place not in self._board.get_future_blasts() and \
-               place not in self._choppers
+               place not in self._future_blasts and \
+               place not in self._choppers and \
+               place not in self._mad_choppers
 
     def get_path(self, to_pnt: Point, grid = None):
         if not grid:
@@ -290,6 +291,15 @@ class DirectionSolver:
         perks = list(filter(lambda x: self._me.distance(x) <= PERK_RADIUS, self._perks))
         return perks
 
+    def get_near_perk_path(self):
+        near_perks = self.get_near_perks()
+        grid = self._make_grid()
+        for perk in near_perks:
+            path = self.get_path(perk, grid)
+            if path:
+                return path
+            grid.cleanup()
+
     def _make_matrix(self):
         matrix = self._board._line_by_line().split('\n')
         for i,val in enumerate(matrix):
@@ -363,6 +373,12 @@ class DirectionSolver:
 
     def pick_mode(self):
         logger.info("Picking new mode")
+        perks_path = self.get_near_perk_path()
+        if perks_path:
+            logger.info("PERK HUNT!!")
+            target_pnt = Point(*perks_path[-1])
+            return ModeInfo(Mode.PERK_HUNT,target_pnt), perks_path
+
         kill_path = self.get_kill_path()
         self._victim = None
         if kill_path:
@@ -396,6 +412,7 @@ class DirectionSolver:
 
     def start_panic(self):
         logger.info("PANICCC!")
+        self._mode = None
         self._panics += 1
         if self._panics > 4 and not self._is_bomb_placed:
             self._panics = 0
@@ -410,22 +427,25 @@ class DirectionSolver:
         next_point = Point(*new_path[1])
         dr = self.get_direction(self._me, next_point)
         logger.info(f"direct: {dr}")
-        if self._mode.mode in DESTROY_MODES:
+        if self._mode.mode != Mode.PANIC:
             if len(new_path) == 2:
+                prev_mode = self._mode.mode
                 self._mode = None
-                return NextMoves("ACT")
-            else:
-                if len(new_path) < 5 or self._is_bomb_placed:
-                    return NextMoves(dr)
-                current_points = self.get_potential_yield(self._me)
-                next_points = self.get_potential_yield(next_point)
-                logger.info(f"yields: {current_points}   {next_points}")
-                if next_points > current_points:
-                    return NextMoves(dr, "ACT")
-                elif current_points:
-                    return NextMoves("ACT", dr)
+                if prev_mode in DESTROY_MODES:
+                    return NextMoves("ACT")
                 else:
                     return NextMoves(dr)
+            if len(new_path) < 5 or self._is_bomb_placed:
+                return NextMoves(dr)
+            current_points = self.get_potential_yield(self._me)
+            next_points = self.get_potential_yield(next_point)
+            logger.info(f"yields: {current_points}   {next_points}")
+            if next_points > current_points:
+                return NextMoves(dr, "ACT")
+            elif current_points:
+                return NextMoves("ACT", dr)
+            else:
+                return NextMoves(dr)
         return NextMoves("NONE")
 
     @get_deco
@@ -446,24 +466,29 @@ class DirectionSolver:
 
         if not self._mode:
            self._mode, new_path  = self.pick_mode()
-        elif self._mode.mode in DESTROY_MODES:
-            kill_path = self.get_kill_path()
-            if self._mode.mode == Mode.ROAMING and kill_path:
-                logger.info("KILL!!")
-                target_pnt = Point(*kill_path[-1])
-                self._victim = target_pnt
-                self._mode = ModeInfo(Mode.KILL,target_pnt)
-                new_path = kill_path
+        elif self._mode.mode != Mode.PANIC:
+            perks_path = self.get_near_perk_path()
+            if perks_path:
+                logger.info("PERK HUNT!!")
+                target_pnt = Point(*perks_path[-1])
+                new_path = perks_path
+                self._mode = ModeInfo(Mode.PERK_HUNT,target_pnt)
             else:
-                new_path = self.get_path(self._mode.target)
-                if not new_path:
-                    logger.info("Time to pick new mode")
-                    self._mode, new_path  = self.pick_mode()
-                    logger.info("new mode is {self._mode}")
+                kill_path = self.get_kill_path()
+                if self._mode.mode == Mode.ROAMING and kill_path:
+                    logger.info("KILL!!")
+                    target_pnt = Point(*kill_path[-1])
+                    self._victim = target_pnt
+                    self._mode = ModeInfo(Mode.KILL,target_pnt)
+                    new_path = kill_path
+                else:
+                    new_path = self.get_path(self._mode.target)
+                    if not new_path:
+                        logger.info("Time to pick new mode")
+                        self._mode, new_path  = self.pick_mode()
+                        logger.info("new mode is {self._mode}")
 
         logger.info(f"Current mode is {self._mode}, {new_path}")
-        perks = self.get_near_perks()
-        logger.debug(f"Near perks: {perks}")
 
         
         if not self._mode or not new_path:
