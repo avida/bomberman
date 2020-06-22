@@ -47,6 +47,11 @@ class Point:
     def __sub__(self, other_point):
         return self._x - other_point._x, self._y - other_point._y
 
+    def __add__(self, other_point):
+        if not other_point:
+            return self
+        return Point(self._x + other_point._x, self._y + other_point._y)
+
     def distance(self, other):
         dx, dy = self - other
         return abs(dx) + abs(dy)

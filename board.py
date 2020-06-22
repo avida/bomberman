@@ -77,10 +77,13 @@ class Board:
         points.update(self._find_all(Element('OTHER_BOMBERMAN')))
         points.update(self._find_all(Element('OTHER_BOMB_BOMBERMAN')))
         points.update(self._find_all(Element('OTHER_DEAD_BOMBERMAN')))
-        return list(points)
+        return points
 
     def get_meat_choppers(self):
         return self._find_all(Element('MEAT_CHOPPER'))
+
+    def get_dead_choppers(self):
+        return self._find_all(Element('DEAD_MEAT_CHOPPER'))
 
     def get_barriers(self):
         """ Return the list of barriers Points."""
@@ -143,7 +146,7 @@ class Board:
         points.update(self._find_all(Element('BOMB_COUNT_INCREASE')))
         points.update(self._find_all(Element('BOMB_IMMUNE')))
         points.update(self._find_all(Element('BOMB_REMOTE_CONTROL')))
-        return list(points)
+        return points
 
     def is_near(self, x, y, elem):
         _is_near = False

@@ -49,6 +49,16 @@ class Mode(Enum):
     PANIC = 3
     PERK_HUNT = 4
 
+class NextMoves:
+    def __init__(self, *acts):
+        self._moves = acts
+        dr = list(filter(lambda x: x not in ["ACT", "NONE"], self._moves))
+        self.direction = dr[0] if dr else None
+
+    def __str__(self):
+        return ",".join(self._moves)
+        
+
 DESTROY_MODES = [Mode.KILL, Mode.ROAMING]
 NOT_PASSIBLE = {
     _ELEMENTS["WALL"],
@@ -103,6 +113,7 @@ class DirectionSolver:
         self._mode = None
         self._prev_players_num = 0
         self._panics = 0
+        self._choppers = set()
     
     @staticmethod
     def get_direction(pnt_from, pnt_to):
@@ -114,6 +125,15 @@ class DirectionSolver:
         }
         vec = Point(pnt_to.get_x() - pnt_from.get_x(), pnt_to.get_y() - pnt_from.get_y())
         return dir_vec.get(vec)
+
+    def direction_to_point(self, dr):
+        dir_vec = {
+            "DOWN":Point(0,1),
+            "UP": Point(0,-1),
+            "LEFT": Point(-1,0),
+            "RIGHT": Point(1,0),
+        }
+        return self._me + dir_vec.get(dr)
 
     @staticmethod
     def _replace_walls(s):
@@ -131,7 +151,7 @@ class DirectionSolver:
             place = self._me
         return place not in self._board.get_barriers() and \
                place not in self._board.get_future_blasts() and \
-               place not in self._board.get_meat_choppers()
+               place not in self._choppers
 
     def get_path(self, to_pnt: Point, grid = None):
         if not grid:
@@ -174,7 +194,7 @@ class DirectionSolver:
             place = Point(self._me.get_x() + dx, self._me.get_y()+dy)
             if not place.is_bad(self._board._size) and \
                 place not in self._board.get_barriers() and \
-                place not in self._board.get_future_blasts(True):
+                place not in self._future_blasts:
                 places.append(place)
         places = sorted(places, key = lambda x: x.distance(self._me), reverse = True)
         return places
@@ -194,13 +214,15 @@ class DirectionSolver:
         pnts = 0
         points = {
             _ELEMENTS["DESTROY_WALL"]: 1,
-            _ELEMENTS["OTHER_BOMBERMAN"]: 10,
-            _ELEMENTS["MEAT_CHOPPER"]: 3,
+            _ELEMENTS["OTHER_BOMBERMAN"]: 20,
+            _ELEMENTS["MEAT_CHOPPER"]: 10,
         }
 
         break_el = [Element("WALL"), Element("DESTROY_WALL")]
 
         def get_points(pnt: Point):
+            if pnt in self._mad_choppers:
+                return True, 10
             el = self._board.get_at(pnt.get_x(), pnt.get_y())
             return el in break_el, points.get(el.get_char(), 0)
 
@@ -251,7 +273,7 @@ class DirectionSolver:
         return points
     
     def get_potential_chopper_moves(self):
-        choppers = self._board.get_meat_choppers()
+        choppers = self._choppers.union(self._mad_choppers)
         ch_moves = set()
         for chopper in choppers:
             for d_tpl in filter(lambda x: x[0] != x[1] and (x[0]== 0 or  x[1] == 0), 
@@ -300,11 +322,16 @@ class DirectionSolver:
             logger.info(f"{10*'-'} tick: {self._count}")
             board = Board(board_string)
             self._board = board
+            dead_choppers = set(board.get_dead_choppers())
+            self._mad_choppers = dead_choppers - self._choppers
+            logger.debug(f"aaah Mad choppers: {self._mad_choppers}")
+            self._choppers = set(board.get_meat_choppers())
             self._perks = board.get_perks()
-            self._other_players = set(board.get_other_bombermans())
+            self._other_players = board.get_other_bombermans()
             self._me = board.get_bomberman()
             self._destroy_walls = board.get_destroy_walls()
             self._matrix = self._make_matrix()
+            self._is_bomb_placed = (self._count - self._bomb_placed) <= 4
             logger.info(self._board.to_string())
             res = "NONE"
             try:
@@ -314,6 +341,7 @@ class DirectionSolver:
                 logger.error(f"Unexpected exception occured: {exc_info}")
             self._prev_bombermans = self._other_players
             self._prev_players_num = len(self._other_players)
+            self._prev_perks = self._perks
             if "ACT" in res:
                 self._bomb_placed = self._count
             logger.info(f"send command: --->{res}<--- decision time: {time.time() - start_time} seconds")
@@ -366,10 +394,10 @@ class DirectionSolver:
                 return sp
         return None
 
-    def start_panic():
+    def start_panic(self):
         logger.info("PANICCC!")
         self._panics += 1
-        if self._panics > 4 and not bomb_placed:
+        if self._panics > 4 and not self._is_bomb_placed:
             self._panics = 0
             return "ACT"
         panic_path = self.panic_path()
@@ -378,9 +406,30 @@ class DirectionSolver:
             return self.get_direction(self._me,next_p)
         return "NULL"
         
+    def get_next_mode_moves(self, new_path):
+        next_point = Point(*new_path[1])
+        dr = self.get_direction(self._me, next_point)
+        logger.info(f"direct: {dr}")
+        if self._mode.mode in DESTROY_MODES:
+            if len(new_path) == 2:
+                self._mode = None
+                return NextMoves("ACT")
+            else:
+                if len(new_path) < 5 or self._is_bomb_placed:
+                    return NextMoves(dr)
+                current_points = self.get_potential_yield(self._me)
+                next_points = self.get_potential_yield(next_point)
+                logger.info(f"yields: {current_points}   {next_points}")
+                if next_points > current_points:
+                    return NextMoves(dr, "ACT")
+                elif current_points:
+                    return NextMoves("ACT", dr)
+                else:
+                    return NextMoves(dr)
+        return NextMoves("NONE")
+
     @get_deco
     def get(self, board_string):
-        bomb_placed = (self._count - self._bomb_placed) <= 4
 
         if self._board.get_at(*self._me.get()).get_char() == _ELEMENTS["DEAD_BOMBERMAN"]:
             self._prev_players_num = 0
@@ -422,27 +471,12 @@ class DirectionSolver:
         else:
             self._panics = 0
 
-        next_point = Point(*new_path[1])
-        dr = self.get_direction(self._me, next_point)
-        if self._mode.mode in DESTROY_MODES:
-            if len(new_path) == 2:
-                self._mode = None
-                return "ACT"
-            else:
-                if len(new_path) < 5 or bomb_placed:
-                    return dr
-                current_points = self.get_potential_yield(self._me)
-                next_points = self.get_potential_yield(next_point)
-                logger.info(f"yields: {current_points}   {next_points}")
-                if next_points > current_points:
-                    return ",".join([dr, "ACT"])
-                elif current_points:
-                    return ",".join(["ACT", dr])
-                else:
-                    return dr
+        next_move = self.get_next_mode_moves(new_path)
+
+        next_point = self.direction_to_point(next_move.direction)
 
         if self.is_place_safe(next_point):
-            return dr
+            return str(next_move)
         elif self.is_place_safe():
             return "NONE"
         else:
