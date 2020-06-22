@@ -47,6 +47,7 @@ class Mode(Enum):
     KILL = 1
     ROAMING = 2
     PANIC = 3
+    PERK_HUNT = 4
 
 DESTROY_MODES = [Mode.KILL, Mode.ROAMING]
 NOT_PASSIBLE = {
@@ -167,7 +168,7 @@ class DirectionSolver:
             grid.cleanup()
         return None
         
-    def get_safe_place(self, radius = 3):
+    def get_safe_place(self, radius = 5):
         places = []
         for dx, dy in product(range(-radius, radius), range(-radius, radius)):
             place = Point(self._me.get_x() + dx, self._me.get_y()+dy)
@@ -261,6 +262,12 @@ class DirectionSolver:
                     ch_moves.add(pnt)
         return ch_moves
 
+    def get_near_perks(self):
+        PERK_RADIUS = 6
+        logger.debug(f"Perks: {self._perks}")
+        perks = list(filter(lambda x: self._me.distance(x) <= PERK_RADIUS, self._perks))
+        return perks
+
     def _make_matrix(self):
         matrix = self._board._line_by_line().split('\n')
         for i,val in enumerate(matrix):
@@ -270,6 +277,7 @@ class DirectionSolver:
             matrix[perk.get_y()][perk.get_x()] = 1
 
         chopper_move = self.get_potential_chopper_moves()
+        self._next_choppers_moves = chopper_move
         for ch_move in chopper_move:
             matrix[ch_move.get_y()][ch_move.get_x()]+= 2000
 
@@ -278,6 +286,7 @@ class DirectionSolver:
             matrix[fb.get_y()][fb.get_x()] *= 5
 
         future_blasts = self._board.get_future_blasts(True)
+        self._future_blasts = future_blasts
         for fb in future_blasts:
             matrix[fb.get_y()][fb.get_x()] = 0
         return matrix
@@ -289,10 +298,12 @@ class DirectionSolver:
             start_time = time.time()
             self._count +=1
             logger.info(f"{10*'-'} tick: {self._count}")
-            self._board = Board(board_string)
-            self._other_players = set(self._board.get_other_bombermans())
-            self._me = self._board.get_bomberman()
-            self._destroy_walls = self._board.get_destroy_walls()
+            board = Board(board_string)
+            self._board = board
+            self._perks = board.get_perks()
+            self._other_players = set(board.get_other_bombermans())
+            self._me = board.get_bomberman()
+            self._destroy_walls = board.get_destroy_walls()
             self._matrix = self._make_matrix()
             logger.info(self._board.to_string())
             res = "NONE"
@@ -354,6 +365,18 @@ class DirectionSolver:
                     continue
                 return sp
         return None
+
+    def start_panic():
+        logger.info("PANICCC!")
+        self._panics += 1
+        if self._panics > 4 and not bomb_placed:
+            self._panics = 0
+            return "ACT"
+        panic_path = self.panic_path()
+        if panic_path:
+            next_p = Point(*panic_path[1])
+            return self.get_direction(self._me,next_p)
+        return "NULL"
         
     @get_deco
     def get(self, board_string):
@@ -390,18 +413,12 @@ class DirectionSolver:
                     logger.info("new mode is {self._mode}")
 
         logger.info(f"Current mode is {self._mode}, {new_path}")
+        perks = self.get_near_perks()
+        logger.debug(f"Near perks: {perks}")
 
+        
         if not self._mode or not new_path:
-            logger.info("PANICCC!")
-            self._panics += 1
-            if self._panics > 4 and not bomb_placed:
-                self._panics = 0
-                return "ACT"
-            panic_path = self.panic_path()
-            if panic_path:
-                next_p = Point(*panic_path[1])
-                return self.get_direction(self._me,next_p)
-            return "NULL"
+            return self.start_panic()
         else:
             self._panics = 0
 
@@ -423,11 +440,13 @@ class DirectionSolver:
                     return ",".join(["ACT", dr])
                 else:
                     return dr
-        logger.info("Nothing to do")
+
         if self.is_place_safe(next_point):
             return dr
-        else:
+        elif self.is_place_safe():
             return "NONE"
+        else:
+            return self.start_panic()
 
 if __name__ == '__main__':
     raise RuntimeError("This module is not intended to be ran from CLI")
