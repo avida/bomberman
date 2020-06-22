@@ -197,11 +197,11 @@ class Board:
         points = set()
         walls = self.get_walls()
 
-        for point_x in range(bomb_point.get_x() - self.BLAST_RANGE, bomb_point.get_x() + self.BLAST_RANGE):
+        for point_x in range(bomb_point.get_x() - self.BLAST_RANGE, bomb_point.get_x() + self.BLAST_RANGE+1):
             pnt = Point(point_x, bomb_point.get_y())
             if not pnt.is_bad(self._size):
                 points.add(pnt)
-        for point_y in range(bomb_point.get_y() - self.BLAST_RANGE, bomb_point.get_y() + self.BLAST_RANGE):
+        for point_y in range(bomb_point.get_y() - self.BLAST_RANGE, bomb_point.get_y() + self.BLAST_RANGE+1):
             pnt = Point(bomb_point.get_x(),point_y)
             if not pnt.is_bad(self._size):
                 points.add(pnt)

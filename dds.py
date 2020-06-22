@@ -57,6 +57,9 @@ class NextMoves:
 
     def __str__(self):
         return ",".join(self._moves)
+
+class PerkInfo:
+    pass
         
 
 DESTROY_MODES = [Mode.KILL, Mode.ROAMING]
@@ -152,7 +155,8 @@ class DirectionSolver:
         return place not in self._board.get_barriers() and \
                place not in self._future_blasts and \
                place not in self._choppers and \
-               place not in self._mad_choppers
+               place not in self._mad_choppers and \
+               place not in self._next_choppers_moves
 
     def get_path(self, to_pnt: Point, grid = None):
         if not grid:
@@ -227,7 +231,7 @@ class DirectionSolver:
             el = self._board.get_at(pnt.get_x(), pnt.get_y())
             return el in break_el, points.get(el.get_char(), 0)
 
-        ranges = [range(1, BLAST_RANGE), range(-1, -BLAST_RANGE , -1)]
+        ranges = [range(1, BLAST_RANGE+1), range(-1, -BLAST_RANGE-1 , -1)]
         for rg in ranges:
             for dx in rg:
                 pnt = Point(current_point.get_x()+dx, current_point.get_y())
@@ -286,7 +290,7 @@ class DirectionSolver:
         return ch_moves
 
     def get_near_perks(self):
-        PERK_RADIUS = 6
+        PERK_RADIUS = 5
         logger.debug(f"Perks: {self._perks}")
         perks = list(filter(lambda x: self._me.distance(x) <= PERK_RADIUS, self._perks))
         return perks
@@ -435,7 +439,7 @@ class DirectionSolver:
                     return NextMoves("ACT")
                 else:
                     return NextMoves(dr)
-            if len(new_path) < 5 or self._is_bomb_placed:
+            if len(new_path) <= 5 or self._is_bomb_placed:
                 return NextMoves(dr)
             current_points = self.get_potential_yield(self._me)
             next_points = self.get_potential_yield(next_point)
