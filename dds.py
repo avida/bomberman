@@ -55,12 +55,132 @@ class NextMoves:
         dr = list(filter(lambda x: x not in ["ACT", "NONE"], self._moves))
         self.direction = dr[0] if dr else None
 
+    def get_oppose_dr(self):
+        oppose_dir = {
+            "LEFT": "RIGHT",
+            "RIGHT": "LEFT",
+            "DOWN": "UP",
+            "UP": "DOWN",
+        }
+        return oppose_dir.get(self.direction)
+
+    def act(self):
+        return "ACT" in self._moves
+
     def __str__(self):
         return ",".join(self._moves)
 
+class Perk(Enum):
+   IMMUNE = _ELEMENTS["BOMB_IMMUNE"]
+   RC = _ELEMENTS["BOMB_REMOTE_CONTROL"]
+   MULTI_BOMBS = _ELEMENTS["BOMB_COUNT_INCREASE"]
+   RANGE = _ELEMENTS["BOMB_BLAST_RADIUS_INCREASE"]
+
+
+PERK_DURATION = 30
+RANGE_INC = 2
+
 class PerkInfo:
-    pass
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.current_perks = defaultdict(int)
+        self._prev_perks = {}
+        self._range = 0
+
+    def get(self, perk: Perk):
+        return self.current_perks[perk]
+
+    def use_rc(self):
+        self.current_perks[Perk.RC] -= 1
+
+    def get_range(self):
+        return self._range
+
+    def update(self, ds):
+        perks_info = dict(zip(ds._perks, map(lambda x: ds._board.get_at(x.get_x(), x.get_y()).get_char(),
+                                                ds._perks)))
+        logger.info(f"Perks info {perks_info}")
         
+        if ds._me in self._prev_perks:
+            perk_pickedup = Perk(self._prev_perks[ds._me])
+            logger.info(f"Perk picked up:{perk_pickedup}")
+            if perk_pickedup == Perk.RANGE:
+                self.current_perks[perk_pickedup] += PERK_DURATION
+                self._range += RANGE_INC
+            elif perk_pickedup == Perk.RC:
+                self.current_perks[perk_pickedup] = 3
+            else:
+                self.current_perks[perk_pickedup] = PERK_DURATION
+
+        for perk in list(self.current_perks.keys()):
+            perk = Perk(perk)
+            if perk == Perk.RC:
+                continue
+            self.current_perks[perk] -= 1
+            if self.current_perks[perk] <= 0:
+                if perk == Perk.RANGE:
+                    self._range = 0
+                del self.current_perks[perk]
+        self._prev_perks = perks_info
+        logger.info(f"Current perks: {self.current_perks} range: {self._range}")
+        
+BOMB_TIMEOUT = 5
+
+class MyBombInfo:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self._placed = 0
+        self.rc_placed = False
+        self.pnt = None
+
+    def __str__(self):
+        return f"placed: {self._placed} coords: {self.pnt}, rc: {self.rc_placed}"
+
+    def placed(self):
+        return self._placed != 0 or self.rc_placed
+
+    def rc(self):
+        return self.rc_placed
+
+    def update(self, ds):
+        if self.rc_placed and ds._prev_move.act():
+            logger.info("RC Detonated!")
+            self.reset()
+            return 
+
+        if ds._board.get_at(ds._me.get_x(), ds._me.get_y()).get_char() == _ELEMENTS["BOMB_BOMBERMAN"]:
+            self.pnt = ds._me
+            self._placed = BOMB_TIMEOUT
+        elif ds._prev_move.act():
+            prev_pnt = ds.direction_to_point(ds._prev_move.get_oppose_dr())
+            self._placed = BOMB_TIMEOUT
+            self.pnt = prev_pnt
+
+        if ds._perks_info.get(Perk.RC):
+            self.rc_placed = True
+            ds._perks_info.use_rc()
+        elif self._placed != 0:
+            self._placed -= 1
+            if not self._placed:
+                self.pnt = None
+
+    def danger_places(self):
+        bomb_point = self.pnt
+        res = []
+        if not bomb_point:
+            return res
+        for point_x in range(bomb_point.get_x() - self.BLAST_RANGE, bomb_point.get_x() + self.BLAST_RANGE+1):
+            pnt = Point(point_x, bomb_point.get_y())
+            if not pnt.is_bad(self._size):
+                points.add(pnt)
+        for point_y in range(bomb_point.get_y() - self.BLAST_RANGE, bomb_point.get_y() + self.BLAST_RANGE+1):
+            pnt = Point(bomb_point.get_x(),point_y)
+            if not pnt.is_bad(self._size):
+                points.add(pnt)
 
 DESTROY_MODES = [Mode.KILL, Mode.ROAMING]
 NOT_PASSIBLE = {
@@ -110,13 +230,15 @@ class DirectionSolver:
         self._victim = None
         self._count = 0
         self._me = None
-        self._bomb_placed = -1000
+        self._bomb = MyBombInfo()
         self._prev_bombermans = set()
         self._target_point = None
         self._mode = None
         self._prev_players_num = 0
         self._panics = 0
         self._choppers = set()
+        self._perks_info = PerkInfo()
+        self._prev_move = NextMoves("NONE")
     
     @staticmethod
     def get_direction(pnt_from, pnt_to):
@@ -128,6 +250,15 @@ class DirectionSolver:
         }
         vec = Point(pnt_to.get_x() - pnt_from.get_x(), pnt_to.get_y() - pnt_from.get_y())
         return dir_vec.get(vec)
+
+    @staticmethod
+    def check_path_straight(path):
+        assert path
+        first = path[0]
+        return all((first[0] == x[0] for x in path)) or \
+               all((first[1] == x[1] for x in path))
+
+        
 
     def direction_to_point(self, dr):
         dir_vec = {
@@ -226,18 +357,19 @@ class DirectionSolver:
         break_el = [Element("WALL"), Element("DESTROY_WALL")]
 
         def get_points(pnt: Point):
+            if pnt.is_bad(self._board._size):
+                return True, 0
             if pnt in self._mad_choppers:
                 return True, 10
             el = self._board.get_at(pnt.get_x(), pnt.get_y())
             return el in break_el, points.get(el.get_char(), 0)
-
-        ranges = [range(1, BLAST_RANGE+1), range(-1, -BLAST_RANGE-1 , -1)]
+        blast_range = BLAST_RANGE + self._perks_info.get_range()
+        ranges = [range(1, blast_range+1), range(-1, -blast_range-1 , -1)]
         for rg in ranges:
             for dx in rg:
                 pnt = Point(current_point.get_x()+dx, current_point.get_y())
                 brk, _pnts = get_points(pnt)
                 pnts += _pnts
-                logger.debug(f" dx {dx}, {brk}, {_pnts}")
                 if brk:
                     break
             for dy in rg:
@@ -245,7 +377,6 @@ class DirectionSolver:
                 _pnts = get_points(pnt)
                 brk, _pnts = get_points(pnt)
                 pnts += _pnts
-                logger.debug(f" dy {dy} {brk}, {_pnts}")
                 if brk:
                     break
 
@@ -290,9 +421,9 @@ class DirectionSolver:
         return ch_moves
 
     def get_near_perks(self):
-        PERK_RADIUS = 5
+        PERK_RADIUS = 7
         logger.debug(f"Perks: {self._perks}")
-        perks = list(filter(lambda x: self._me.distance(x) <= PERK_RADIUS, self._perks))
+        perks = sorted(list(filter(lambda x: self._me.distance(x) <= PERK_RADIUS, self._perks)), key = lambda x: x.distance(self._me))
         return perks
 
     def get_near_perk_path(self):
@@ -323,7 +454,7 @@ class DirectionSolver:
 
         future_blasts = self._board.get_future_blasts(True)
         self._future_blasts = future_blasts
-        for fb in future_blasts:
+        for fb in self._future_blasts:
             matrix[fb.get_y()][fb.get_x()] = 0
         return matrix
 
@@ -336,18 +467,20 @@ class DirectionSolver:
             logger.info(f"{10*'-'} tick: {self._count}")
             board = Board(board_string)
             self._board = board
+            self._me = board.get_bomberman()
+            self._other_players = board.get_other_bombermans()
+            self._perks = board.get_perks()
+            self._perks_info.update(self)
+            self._bomb.update(self)
             dead_choppers = set(board.get_dead_choppers())
             self._mad_choppers = dead_choppers - self._choppers
             logger.debug(f"aaah Mad choppers: {self._mad_choppers}")
             self._choppers = set(board.get_meat_choppers())
-            self._perks = board.get_perks()
-            self._other_players = board.get_other_bombermans()
-            self._me = board.get_bomberman()
             self._destroy_walls = board.get_destroy_walls()
             self._matrix = self._make_matrix()
-            self._is_bomb_placed = (self._count - self._bomb_placed) <= 4
             logger.info(self._board.to_string())
-            res = "NONE"
+            logger.debug(f"Bomb info: {self._bomb}")
+            res = NextMoves("NONE")
             try:
                 res = f(self, board_string)
             except Exception as e:
@@ -356,10 +489,9 @@ class DirectionSolver:
             self._prev_bombermans = self._other_players
             self._prev_players_num = len(self._other_players)
             self._prev_perks = self._perks
-            if "ACT" in res:
-                self._bomb_placed = self._count
             logger.info(f"send command: --->{res}<--- decision time: {time.time() - start_time} seconds")
-            return res
+            self._prev_move = res
+            return str(res)
         return wrapper
 
     def get_kill_path(self):
@@ -418,14 +550,14 @@ class DirectionSolver:
         logger.info("PANICCC!")
         self._mode = None
         self._panics += 1
-        if self._panics > 4 and not self._is_bomb_placed:
+        if self._panics > 4 and not self._bomb.placed():
             self._panics = 0
-            return "ACT"
+            return NextMoves("ACT")
         panic_path = self.panic_path()
         if panic_path:
             next_p = Point(*panic_path[1])
-            return self.get_direction(self._me,next_p)
-        return "NULL"
+            return NextMoves(self.get_direction(self._me,next_p))
+        return NextMoves("NULL")
         
     def get_next_mode_moves(self, new_path):
         next_point = Point(*new_path[1])
@@ -439,8 +571,17 @@ class DirectionSolver:
                     return NextMoves("ACT")
                 else:
                     return NextMoves(dr)
-            if len(new_path) <= 5 or self._is_bomb_placed:
+            path_is_straight = self.check_path_straight(new_path[:-1])
+            if path_is_straight and len(new_path) <= 5 + self._perks_info.get_range():
                 return NextMoves(dr)
+
+            if self._perks_info.get(Perk.MULTI_BOMBS):
+                return NextMoves("ACT", dr)
+
+            if self._bomb.placed() and not self._perks_info.get(Perk.MULTI_BOMBS):
+                return NextMoves(dr)
+
+
             current_points = self.get_potential_yield(self._me)
             next_points = self.get_potential_yield(next_point)
             logger.info(f"yields: {current_points}   {next_points}")
@@ -450,16 +591,15 @@ class DirectionSolver:
                 return NextMoves("ACT", dr)
             else:
                 return NextMoves(dr)
-        return NextMoves("NONE")
 
     @get_deco
     def get(self, board_string):
 
         if self._board.get_at(*self._me.get()).get_char() == _ELEMENTS["DEAD_BOMBERMAN"]:
             self._prev_players_num = 0
-            self._bomb_placed = -1000
+            self._bomb.reset()
             logger.info("game over")
-            return "NULL"
+            return NextMoves("NULL")
 
         if len(self._other_players) > self._prev_players_num:
             self._victim = None
@@ -487,10 +627,11 @@ class DirectionSolver:
                     new_path = kill_path
                 else:
                     new_path = self.get_path(self._mode.target)
-                    if not new_path:
+                    target_obj = self._board.get(self._mode.target).get_char()
+                    if not new_path or target_obj not in [_ELEMENTS["OTHER_BOMBERMAN"], _ELEMENTS["DESTROY_WALL"] ]:
                         logger.info("Time to pick new mode")
                         self._mode, new_path  = self.pick_mode()
-                        logger.info("new mode is {self._mode}")
+                        logger.info(f"new mode is {self._mode}")
 
         logger.info(f"Current mode is {self._mode}, {new_path}")
 
@@ -505,9 +646,9 @@ class DirectionSolver:
         next_point = self.direction_to_point(next_move.direction)
 
         if self.is_place_safe(next_point):
-            return str(next_move)
+            return next_move
         elif self.is_place_safe():
-            return "NONE"
+            return NextMoves("NONE")
         else:
             return self.start_panic()
 

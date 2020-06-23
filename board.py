@@ -50,6 +50,10 @@ class Board:
         """ Return an Element object at coordinates x,y."""
         return Element(self._string[self._xy2strpos(x, y)])
 
+    def get(self, pnt):
+        return self.get_at(pnt.get_x(), pnt.get_y())
+
+
     def is_at(self, x, y, element_object):
         """ Return True if Element is at x,y coordinates."""
         return element_object == self.get_at(x, y)
@@ -195,23 +199,13 @@ class Board:
 
     def _search_blasts(self, bomb_point):
         points = set()
-        walls = self.get_walls()
+        walls = set(self.get_barriers())
 
-        for point_x in range(bomb_point.get_x() - self.BLAST_RANGE, bomb_point.get_x() + self.BLAST_RANGE+1):
-            pnt = Point(point_x, bomb_point.get_y())
-            if not pnt.is_bad(self._size):
-                points.add(pnt)
-        for point_y in range(bomb_point.get_y() - self.BLAST_RANGE, bomb_point.get_y() + self.BLAST_RANGE+1):
-            pnt = Point(bomb_point.get_x(),point_y)
-            if not pnt.is_bad(self._size):
-                points.add(pnt)
 
-        return points
-
-        for search_range, is_x in ((range(bomb_point.get_x(), bomb_point.get_x() + self.BLAST_RANGE), True),
-                                   (range(bomb_point.get_x(), bomb_point.get_x() - self.BLAST_RANGE), True),
-                                   (range(bomb_point.get_y(), bomb_point.get_y() + self.BLAST_RANGE), False),
-                                   (range(bomb_point.get_y(), bomb_point.get_y() - self.BLAST_RANGE), False)):
+        for search_range, is_x in ((range(bomb_point.get_x()+1, bomb_point.get_x() + self.BLAST_RANGE + 1), True),
+                                   (range(bomb_point.get_x()-1, bomb_point.get_x() - self.BLAST_RANGE - 1, -1), True),
+                                   (range(bomb_point.get_y()+1, bomb_point.get_y() + self.BLAST_RANGE + 1), False),
+                                   (range(bomb_point.get_y()-1, bomb_point.get_y() - self.BLAST_RANGE - 1, -1), False)):
             for i in search_range:
                 current_point = Point(i, bomb_point.get_y()) if is_x else Point(bomb_point.get_x(), i)
                 if (current_point.is_bad(self._size) or
