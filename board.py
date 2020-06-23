@@ -197,22 +197,26 @@ class Board:
     def _xy2strpos(self, x, y):
         return self._size * y + x
 
+    def walk_in_bomb_range(self, bomb_point, rng, f):
+        for search_range, is_x in ((range(bomb_point.get_x()+1, bomb_point.get_x() + rng + 1), True),
+                                   (range(bomb_point.get_x()-1, bomb_point.get_x() - rng - 1, -1), True),
+                                   (range(bomb_point.get_y()+1, bomb_point.get_y() + rng + 1), False),
+                                   (range(bomb_point.get_y()-1, bomb_point.get_y() - rng - 1, -1), False)):
+            for i in search_range:
+                current_point = Point(i, bomb_point.get_y()) if is_x else Point(bomb_point.get_x(), i)
+                if current_point.is_bad(self._size) or \
+                        f(current_point):
+                    break
+
     def _search_blasts(self, bomb_point):
         points = set()
         walls = set(self.get_barriers())
+        def f(pnt):
+            if pnt in walls:
+               return True 
+            points.add(pnt)
 
-
-        for search_range, is_x in ((range(bomb_point.get_x()+1, bomb_point.get_x() + self.BLAST_RANGE + 1), True),
-                                   (range(bomb_point.get_x()-1, bomb_point.get_x() - self.BLAST_RANGE - 1, -1), True),
-                                   (range(bomb_point.get_y()+1, bomb_point.get_y() + self.BLAST_RANGE + 1), False),
-                                   (range(bomb_point.get_y()-1, bomb_point.get_y() - self.BLAST_RANGE - 1, -1), False)):
-            for i in search_range:
-                current_point = Point(i, bomb_point.get_y()) if is_x else Point(bomb_point.get_x(), i)
-                if (current_point.is_bad(self._size) or
-                        current_point in walls):
-                    break
-                else:
-                    points.add(current_point)
+        self.walk_in_bomb_range(bomb_point, self.BLAST_RANGE, f)
 
         return points
 

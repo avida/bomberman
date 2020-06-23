@@ -136,6 +136,7 @@ class MyBombInfo:
         self._placed = 0
         self.rc_placed = False
         self.pnt = None
+        self.danger = set()
 
     def __str__(self):
         return f"placed: {self._placed} coords: {self.pnt}, rc: {self.rc_placed}"
@@ -167,20 +168,18 @@ class MyBombInfo:
             self._placed -= 1
             if not self._placed:
                 self.pnt = None
+        self.danger = self._danger_places(ds)
 
-    def danger_places(self):
-        bomb_point = self.pnt
-        res = []
-        if not bomb_point:
-            return res
-        for point_x in range(bomb_point.get_x() - self.BLAST_RANGE, bomb_point.get_x() + self.BLAST_RANGE+1):
-            pnt = Point(point_x, bomb_point.get_y())
-            if not pnt.is_bad(self._size):
+    def _danger_places(self, ds):
+        points = set()
+        if self.pnt:
+            walls = set(ds._board.get_barriers())
+            def f(pnt):
+                if pnt in walls:
+                   return True 
                 points.add(pnt)
-        for point_y in range(bomb_point.get_y() - self.BLAST_RANGE, bomb_point.get_y() + self.BLAST_RANGE+1):
-            pnt = Point(bomb_point.get_x(),point_y)
-            if not pnt.is_bad(self._size):
-                points.add(pnt)
+            ds._board.walk_in_bomb_range(self.pnt, ds._board.BLAST_RANGE + ds._perks_info.get_range(), f)
+        return points
 
 DESTROY_MODES = [Mode.KILL, Mode.ROAMING]
 NOT_PASSIBLE = {
@@ -326,7 +325,7 @@ class DirectionSolver:
         
     def get_safe_place(self, radius = 5):
         places = []
-        for dx, dy in product(range(-radius, radius), range(-radius, radius)):
+        for dx, dy in product(range(-radius, radius+1), range(-radius, radius)):
             place = Point(self._me.get_x() + dx, self._me.get_y()+dy)
             if not place.is_bad(self._board._size) and \
                 place not in self._board.get_barriers() and \
@@ -410,18 +409,18 @@ class DirectionSolver:
     
     def get_potential_chopper_moves(self):
         choppers = self._choppers.union(self._mad_choppers)
-        ch_moves = set()
+        ch_moves = []
         for chopper in choppers:
             for d_tpl in filter(lambda x: x[0] != x[1] and (x[0]== 0 or  x[1] == 0), 
                                 product([0, 1, -1], [0, 1, -1])):
                 pnt = chopper.add_tupl(d_tpl)
                 if not pnt.is_bad(self._board._size) and \
                     self._board.get_at(*pnt.get()).get_char() not in [_ELEMENTS["DESTROY_WALL"], _ELEMENTS["WALL"]]:
-                    ch_moves.add(pnt)
+                    ch_moves.append(pnt)
         return ch_moves
 
     def get_near_perks(self):
-        PERK_RADIUS = 7
+        PERK_RADIUS = 8
         logger.debug(f"Perks: {self._perks}")
         perks = sorted(list(filter(lambda x: self._me.distance(x) <= PERK_RADIUS, self._perks)), key = lambda x: x.distance(self._me))
         return perks
@@ -445,17 +444,23 @@ class DirectionSolver:
 
         chopper_move = self.get_potential_chopper_moves()
         self._next_choppers_moves = chopper_move
+
         for ch_move in chopper_move:
             matrix[ch_move.get_y()][ch_move.get_x()]+= 2000
 
         future_blasts = self._board.get_future_blasts()
-        for fb in future_blasts:
-            matrix[fb.get_y()][fb.get_x()] *= 5
+        if self._perks_info.get(Perk.IMMUNE) < 4:
+            for fb in future_blasts.union(self._bomb.danger):
+                matrix[fb.get_y()][fb.get_x()] *= 5
 
         future_blasts = self._board.get_future_blasts(True)
+        if self._bomb.placed == 1:
+            future_blasts = future_blasts.union(self._bomb.danger)
+
         self._future_blasts = future_blasts
-        for fb in self._future_blasts:
-            matrix[fb.get_y()][fb.get_x()] = 0
+        if self._perks_info.get(Perk.IMMUNE) < 4:
+            for fb in self._future_blasts:
+                matrix[fb.get_y()][fb.get_x()] = 0
         return matrix
 
 
@@ -568,17 +573,23 @@ class DirectionSolver:
                 prev_mode = self._mode.mode
                 self._mode = None
                 if prev_mode in DESTROY_MODES:
-                    return NextMoves("ACT")
+                    panic_path = self.panic_path()
+                    dr = "NONE"
+                    if panic_path:
+                        next_point = Point(*panic_path[1])
+                        dr = self.get_direction(self._me, next_point)
+                    return NextMoves("ACT", dr)
                 else:
                     return NextMoves(dr)
-            path_is_straight = self.check_path_straight(new_path[:-1])
-            if path_is_straight and len(new_path) <= 5 + self._perks_info.get_range():
+            #path_is_straight = self.check_path_straight(new_path[:-1])
+
+            if len(new_path) <= 5:
                 return NextMoves(dr)
 
             if self._perks_info.get(Perk.MULTI_BOMBS):
                 return NextMoves("ACT", dr)
 
-            if self._bomb.placed() and not self._perks_info.get(Perk.MULTI_BOMBS):
+            if self._bomb.placed():
                 return NextMoves(dr)
 
 
