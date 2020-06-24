@@ -43,6 +43,13 @@ from enum import Enum
 
 BLAST_RANGE = 3
 
+ACT = "ACT"
+NONE = "NONE"
+UP = "UP"
+DOWN = "DOWN"
+LEFT = "LEFT"
+RIGHT = "RIGHT"
+
 class Mode(Enum):
     KILL = 1
     ROAMING = 2
@@ -51,24 +58,36 @@ class Mode(Enum):
 
 class NextMoves:
     def __init__(self, *acts):
-        self._moves = acts
-        dr = list(filter(lambda x: x not in ["ACT", "NONE"], self._moves))
+        self._moves = list(acts)
+        dr = list(filter(lambda x: x not in [ACT, NONE], self._moves))
         self.direction = dr[0] if dr else None
 
     def get_oppose_dr(self):
         oppose_dir = {
-            "LEFT": "RIGHT",
-            "RIGHT": "LEFT",
-            "DOWN": "UP",
-            "UP": "DOWN",
+            LEFT: RIGHT,
+            RIGHT: LEFT,
+            DOWN: UP,
+            UP: DOWN,
         }
         return oppose_dir.get(self.direction)
 
     def act(self):
-        return "ACT" in self._moves
+        return ACT in self._moves
 
     def __str__(self):
         return ",".join(self._moves)
+
+    def no_act(self):
+        if self.act():
+            self._moves.remove(ACT)
+
+    def do_act(self, after_move = False):
+        if len(self._moves) <= 1:
+            if after_move:
+                self._moves.append(ACT)
+            else:
+                self._moves.insert(0, ACT)
+
 
 class Perk(Enum):
    IMMUNE = _ELEMENTS["BOMB_IMMUNE"]
@@ -101,8 +120,6 @@ class PerkInfo:
     def update(self, ds):
         perks_info = dict(zip(ds._perks, map(lambda x: ds._board.get_at(x.get_x(), x.get_y()).get_char(),
                                                 ds._perks)))
-        logger.info(f"Perks info {perks_info}")
-        
         if ds._me in self._prev_perks:
             perk_pickedup = Perk(self._prev_perks[ds._me])
             logger.info(f"Perk picked up:{perk_pickedup}")
@@ -142,7 +159,7 @@ class MyBombInfo:
         return f"placed: {self._placed} coords: {self.pnt}, rc: {self.rc_placed}"
 
     def placed(self):
-        return self._placed != 0 or self.rc_placed
+        return self._placed != 0 
 
     def rc(self):
         return self.rc_placed
@@ -161,13 +178,17 @@ class MyBombInfo:
             self._placed = BOMB_TIMEOUT
             self.pnt = prev_pnt
 
-        if ds._perks_info.get(Perk.RC):
+        if self._placed == BOMB_TIMEOUT and ds._perks_info.get(Perk.RC):
             self.rc_placed = True
             ds._perks_info.use_rc()
-        elif self._placed != 0:
-            self._placed -= 1
-            if not self._placed:
-                self.pnt = None
+            self._placed = 0
+
+        if not self.rc_placed:
+            if self._placed != 0:
+                self._placed -= 1
+                if not self._placed:
+                    self.pnt = None
+
         self.danger = self._danger_places(ds)
 
     def _danger_places(self, ds):
@@ -180,6 +201,22 @@ class MyBombInfo:
                 points.add(pnt)
             ds._board.walk_in_bomb_range(self.pnt, ds._board.BLAST_RANGE + ds._perks_info.get_range(), f)
         return points
+
+@dataclass
+class Chopper:
+    dir: str
+    coords: Point
+
+class ChoppersInfo:
+    def __init__():
+        self.reset()
+
+    def reset():
+        self.choppers = []
+
+    def update(self, ds):
+        pass
+
 
 DESTROY_MODES = [Mode.KILL, Mode.ROAMING]
 NOT_PASSIBLE = {
@@ -422,7 +459,9 @@ class DirectionSolver:
     def get_near_perks(self):
         PERK_RADIUS = 8
         logger.debug(f"Perks: {self._perks}")
-        perks = sorted(list(filter(lambda x: self._me.distance(x) <= PERK_RADIUS, self._perks)), key = lambda x: x.distance(self._me))
+        #perks = filter(lambda x: self._board.get(x).get_char() != _ELEMENTS["BOMB_REMOTE_CONTROL"],  self._perks)
+        perks = self._perks
+        perks = sorted(list(filter(lambda x: self._me.distance(x) <= PERK_RADIUS, perks)), key = lambda x: x.distance(self._me))
         return perks
 
     def get_near_perk_path(self):
@@ -451,10 +490,10 @@ class DirectionSolver:
         future_blasts = self._board.get_future_blasts()
         if self._perks_info.get(Perk.IMMUNE) < 4:
             for fb in future_blasts.union(self._bomb.danger):
-                matrix[fb.get_y()][fb.get_x()] *= 5
+                matrix[fb.get_y()][fb.get_x()] *= 10
 
         future_blasts = self._board.get_future_blasts(True)
-        if self._bomb.placed == 1:
+        if self._bomb.placed == 2:
             future_blasts = future_blasts.union(self._bomb.danger)
 
         self._future_blasts = future_blasts
@@ -578,16 +617,17 @@ class DirectionSolver:
                     if panic_path:
                         next_point = Point(*panic_path[1])
                         dr = self.get_direction(self._me, next_point)
-                    return NextMoves("ACT", dr)
+                    return NextMoves(ACT, dr)
                 else:
                     return NextMoves(dr)
             #path_is_straight = self.check_path_straight(new_path[:-1])
+            SAFE_MOVES = 5
 
-            if len(new_path) <= 5:
+            if len(new_path) <= SAFE_MOVES and self._perks_info.get(Perk.IMMUNE) <= SAFE_MOVES:
                 return NextMoves(dr)
 
             if self._perks_info.get(Perk.MULTI_BOMBS):
-                return NextMoves("ACT", dr)
+                return NextMoves(ACT, dr)
 
             if self._bomb.placed():
                 return NextMoves(dr)
@@ -597,9 +637,9 @@ class DirectionSolver:
             next_points = self.get_potential_yield(next_point)
             logger.info(f"yields: {current_points}   {next_points}")
             if next_points > current_points:
-                return NextMoves(dr, "ACT")
+                return NextMoves(dr, ACT)
             elif current_points:
-                return NextMoves("ACT", dr)
+                return NextMoves(ACT, dr)
             else:
                 return NextMoves(dr)
 
@@ -607,15 +647,13 @@ class DirectionSolver:
     def get(self, board_string):
 
         if self._board.get_at(*self._me.get()).get_char() == _ELEMENTS["DEAD_BOMBERMAN"]:
+            logger.info("game over")
             self._prev_players_num = 0
             self._bomb.reset()
-            logger.info("game over")
-            return NextMoves("NULL")
-
-        if len(self._other_players) > self._prev_players_num:
+            self._perks_info.reset()
             self._victim = None
             self._panics = 0
-            logger.info("restarted!!")
+            return NextMoves("NULL")
 
         new_path = None
 
@@ -653,10 +691,22 @@ class DirectionSolver:
             self._panics = 0
 
         next_move = self.get_next_mode_moves(new_path)
-
+        logger.debug(f"Next moves returned: {next_move}")
         next_point = self.direction_to_point(next_move.direction)
+        is_immune = self._perks_info.get(Perk.IMMUNE)
 
-        if self.is_place_safe(next_point):
+        if self._bomb.rc_placed:
+            next_move.no_act()
+            if is_immune:
+                next_move.do_act(after_move = False)
+            elif self._me == self._bomb.pnt:
+                pass
+            elif next_point not in self._bomb.danger:
+                next_move.do_act(after_move = True)
+            elif self._me not in self._bomb.danger:
+                next_move.do_act(after_move = False)
+
+        if is_immune or self.is_place_safe(next_point):
             return next_move
         elif self.is_place_safe():
             return NextMoves("NONE")
