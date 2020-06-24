@@ -59,6 +59,8 @@ class Mode(Enum):
 class NextMoves:
     def __init__(self, *acts):
         self._moves = list(acts)
+        if not self._moves:
+            self._moves = []
         dr = list(filter(lambda x: x not in [ACT, NONE], self._moves))
         self.direction = dr[0] if dr else None
 
@@ -280,15 +282,15 @@ class DirectionSolver:
         self._panics = 0
         self.choppers = ChoppersInfo()
         self._perks_info = PerkInfo()
-        self._prev_move = NextMoves("NONE")
+        self._prev_move = NextMoves()
     
     @staticmethod
     def get_direction(pnt_from, pnt_to):
         dir_vec = {
-            Point(0,1): "DOWN",
-            Point(0,-1): "UP",
-            Point(-1,0): "LEFT",
-            Point(1,0): "RIGHT",
+            Point(0,1): DOWN,
+            Point(0,-1): UP,
+            Point(-1,0): LEFT,
+            Point(1,0): RIGHT,
         }
         vec = Point(pnt_to.get_x() - pnt_from.get_x(), pnt_to.get_y() - pnt_from.get_y())
         return dir_vec.get(vec)
@@ -304,10 +306,10 @@ class DirectionSolver:
 
     def direction_to_point(self, dr):
         dir_vec = {
-            "DOWN":Point(0,1),
-            "UP": Point(0,-1),
-            "LEFT": Point(-1,0),
-            "RIGHT": Point(1,0),
+            DOWN:Point(0,1),
+            UP: Point(0,-1),
+            LEFT: Point(-1,0),
+            RIGHT: Point(1,0),
         }
         return self._me + dir_vec.get(dr)
 
@@ -528,7 +530,7 @@ class DirectionSolver:
             self._matrix = self._make_matrix()
             logger.info(self._board.to_string())
             logger.debug(f"Bomb info: {self._bomb}")
-            res = NextMoves("NONE")
+            res = NextMoves()
             try:
                 res = f(self, board_string)
             except Exception as e:
@@ -600,12 +602,12 @@ class DirectionSolver:
         self._panics += 1
         if self._panics > 4 and not self._bomb.placed():
             self._panics = 0
-            return NextMoves("ACT")
+            return NextMoves(ACT)
         panic_path = self.panic_path()
         if panic_path:
             next_p = Point(*panic_path[1])
             return NextMoves(self.get_direction(self._me,next_p))
-        return NextMoves("NULL")
+        return NextMoves()
         
     def get_next_mode_moves(self, new_path):
         next_point = Point(*new_path[1])
@@ -657,7 +659,7 @@ class DirectionSolver:
             self._perks_info.reset()
             self._victim = None
             self._panics = 0
-            return NextMoves("NULL")
+            return NextMoves()
 
         new_path = None
 
@@ -714,7 +716,7 @@ class DirectionSolver:
         if is_immune or self.is_place_safe(next_point):
             return next_move
         elif self.is_place_safe():
-            return NextMoves("NONE")
+            return NextMoves()
         else:
             return self.start_panic()
 
