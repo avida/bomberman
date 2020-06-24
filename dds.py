@@ -208,13 +208,19 @@ class Chopper:
     coords: Point
 
 class ChoppersInfo:
-    def __init__():
+    def __init__(self):
         self.reset()
 
-    def reset():
-        self.choppers = []
+    def reset(self):
+        self._choppers = set()
+        self.mad_choppers = set()
+        self.dead_choppers = set()
 
     def update(self, ds):
+        dead_choppers = set(ds._board.get_dead_choppers())
+        self.mad_choppers = dead_choppers - self._choppers
+        logger.debug(f"aaah Mad choppers: {self.mad_choppers}")
+        self._choppers = set(ds._board.get_meat_choppers())
         pass
 
 
@@ -272,7 +278,7 @@ class DirectionSolver:
         self._mode = None
         self._prev_players_num = 0
         self._panics = 0
-        self._choppers = set()
+        self.choppers = ChoppersInfo()
         self._perks_info = PerkInfo()
         self._prev_move = NextMoves("NONE")
     
@@ -321,8 +327,8 @@ class DirectionSolver:
             place = self._me
         return place not in self._board.get_barriers() and \
                place not in self._future_blasts and \
-               place not in self._choppers and \
-               place not in self._mad_choppers and \
+               place not in self.choppers._choppers and \
+               place not in self.choppers.mad_choppers and \
                place not in self._next_choppers_moves
 
     def get_path(self, to_pnt: Point, grid = None):
@@ -395,7 +401,7 @@ class DirectionSolver:
         def get_points(pnt: Point):
             if pnt.is_bad(self._board._size):
                 return True, 0
-            if pnt in self._mad_choppers:
+            if pnt in self.choppers.mad_choppers:
                 return True, 10
             el = self._board.get_at(pnt.get_x(), pnt.get_y())
             return el in break_el, points.get(el.get_char(), 0)
@@ -445,7 +451,7 @@ class DirectionSolver:
         return points
     
     def get_potential_chopper_moves(self):
-        choppers = self._choppers.union(self._mad_choppers)
+        choppers = self.choppers._choppers.union(self.choppers.mad_choppers)
         ch_moves = []
         for chopper in choppers:
             for d_tpl in filter(lambda x: x[0] != x[1] and (x[0]== 0 or  x[1] == 0), 
@@ -516,11 +522,9 @@ class DirectionSolver:
             self._perks = board.get_perks()
             self._perks_info.update(self)
             self._bomb.update(self)
-            dead_choppers = set(board.get_dead_choppers())
-            self._mad_choppers = dead_choppers - self._choppers
-            logger.debug(f"aaah Mad choppers: {self._mad_choppers}")
-            self._choppers = set(board.get_meat_choppers())
+            self.choppers.update(self)
             self._destroy_walls = board.get_destroy_walls()
+
             self._matrix = self._make_matrix()
             logger.info(self._board.to_string())
             logger.debug(f"Bomb info: {self._bomb}")
@@ -705,6 +709,7 @@ class DirectionSolver:
                 next_move.do_act(after_move = True)
             elif self._me not in self._bomb.danger:
                 next_move.do_act(after_move = False)
+        logger.debug(f"Next moves with rc: {next_move}")
 
         if is_immune or self.is_place_safe(next_point):
             return next_move
