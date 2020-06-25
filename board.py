@@ -107,6 +107,10 @@ class Board:
         """ """
         return  self._find_all(Element('DESTROY_WALL'))
 
+    def get_destroied_walls(self):
+        """ """
+        return  self._find_all(Element('DESTROYED_WALL'))
+
     def get_bombs(self, about_to_explode = False):
         """ Returns the list of bombs points."""
         points = set()

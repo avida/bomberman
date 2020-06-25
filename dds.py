@@ -214,16 +214,49 @@ class ChoppersInfo:
         self.reset()
 
     def reset(self):
+        self._prev_choppers= set()
         self._choppers = set()
         self.mad_choppers = set()
         self.dead_choppers = set()
+        self._predicted_moves = set()
 
     def update(self, ds):
         dead_choppers = set(ds._board.get_dead_choppers())
         self.mad_choppers = dead_choppers - self._choppers
         logger.debug(f"aaah Mad choppers: {self.mad_choppers}")
         self._choppers = set(ds._board.get_meat_choppers())
-        pass
+        predicted_moves = []
+        chops_copy = self._choppers.copy()
+        walls = ds._walls.union(ds._destroy_walls).union(ds._board.get_blasts()).union(ds._board.get_destroied_walls())
+        predicted_moves = []
+        for chop in self._choppers:
+            chops_sur = chop.surrounding_pnts()
+            possible_moves = [(pnt, pnt in self._prev_choppers) for pnt in chops_sur]
+            possible_moves = list(filter(lambda x: x[1], possible_moves))
+            if len(possible_moves) != 1:
+                continue
+            chops_copy.remove(chop)
+            chopper_vec = chop - possible_moves[0][0]
+            chopper_move = chop + Point(*chopper_vec)
+            logger.debug(f"Choppper {chop} predicted pos: {chopper_move}")
+            if chopper_move in walls:
+                chopper_moves = [pnt for pnt in chop.surrounding_pnts() if pnt not in walls]
+                logger.debug(f"chopper {chop} meet wall, possible moves: {chopper_moves}")
+                predicted_moves += chopper_moves
+            else:
+                predicted_moves.append(chopper_move)
+        
+
+        logger.debug(f"Unpredicted choppers:{chops_copy}")
+        for chop in chops_copy:
+            chopper_moves = [pnt for pnt in chop.surrounding_pnts() if pnt not in walls]
+            predicted_moves += chopper_moves
+        logger.debug(f"Predicted moves:{predicted_moves}")
+        self._predicted_moves = predicted_moves
+
+        
+
+        self._prev_choppers = self._choppers
 
 
 DESTROY_MODES = [Mode.KILL, Mode.ROAMING]
@@ -263,6 +296,19 @@ class ModeInfo():
     mode: Mode
     target: Point
 
+VECTOR_TO_DIR = {
+    Point(0,1): DOWN,
+    Point(0,-1): UP,
+    Point(-1,0): LEFT,
+    Point(1,0): RIGHT,
+}
+
+DIR_TO_VECTOR = {
+    DOWN:Point(0,1),
+    UP: Point(0,-1),
+    LEFT: Point(-1,0),
+    RIGHT: Point(1,0),
+}
 
 class DirectionSolver:
     """ This class should contain the movement generation algorithm."""
@@ -283,17 +329,12 @@ class DirectionSolver:
         self.choppers = ChoppersInfo()
         self._perks_info = PerkInfo()
         self._prev_move = NextMoves()
+        self._walls = set()
     
     @staticmethod
     def get_direction(pnt_from, pnt_to):
-        dir_vec = {
-            Point(0,1): DOWN,
-            Point(0,-1): UP,
-            Point(-1,0): LEFT,
-            Point(1,0): RIGHT,
-        }
         vec = Point(pnt_to.get_x() - pnt_from.get_x(), pnt_to.get_y() - pnt_from.get_y())
-        return dir_vec.get(vec)
+        return VECTOR_TO_DIR.get(vec)
 
     @staticmethod
     def check_path_straight(path):
@@ -305,13 +346,7 @@ class DirectionSolver:
         
 
     def direction_to_point(self, dr):
-        dir_vec = {
-            DOWN:Point(0,1),
-            UP: Point(0,-1),
-            LEFT: Point(-1,0),
-            RIGHT: Point(1,0),
-        }
-        return self._me + dir_vec.get(dr)
+        return self._me + DIR_TO_VECTOR.get(dr)
 
     @staticmethod
     def _replace_walls(s):
@@ -327,11 +362,13 @@ class DirectionSolver:
     def is_place_safe(self, place = None):
         if not place:
             place = self._me
-        return place not in self._board.get_barriers() and \
-               place not in self._future_blasts and \
-               place not in self.choppers._choppers and \
+        is_immune = self._perks_info.get(Perk.IMMUNE) > 1
+        return \
+               (is_immune or place not in self._future_blasts) and \
                place not in self.choppers.mad_choppers and \
                place not in self._next_choppers_moves
+               #place not in self._board.get_barriers() and \
+               #place not in self.choppers._choppers and \
 
     def get_path(self, to_pnt: Point, grid = None):
         if not grid:
@@ -372,8 +409,9 @@ class DirectionSolver:
         places = []
         for dx, dy in product(range(-radius, radius+1), range(-radius, radius)):
             place = Point(self._me.get_x() + dx, self._me.get_y()+dy)
+            #place not in self._board.get_barriers() and \
             if not place.is_bad(self._board._size) and \
-                place not in self._board.get_barriers() and \
+                place not in self.choppers._predicted_moves and \
                 place not in self._future_blasts:
                 places.append(place)
         places = sorted(places, key = lambda x: x.distance(self._me), reverse = True)
@@ -443,6 +481,8 @@ class DirectionSolver:
     def get_roaming_point(self):
         walls_dens = self.get_walls_density()
         points = set()
+        if not walls_dens:
+            return 
         qd  = walls_dens[0][0]
         points = walls_dens[0][1]
         logger.info(qd)
@@ -453,12 +493,17 @@ class DirectionSolver:
         return points
     
     def get_potential_chopper_moves(self):
-        choppers = self.choppers._choppers.union(self.choppers.mad_choppers)
+        return self.choppers._predicted_moves
+        mad_choppers_moves = []
+        for mad_chopper in sefl.choppers.mad_choppers:
+            for pnt in mad_chopper.surrounding_pnts():
+                if not pnt.is_bad(self._board._size):
+                    mad_choppers_moves.append(pnt)
+
+        choppers = self.choppers._choppers.union(mad_choppers_moves)
         ch_moves = []
         for chopper in choppers:
-            for d_tpl in filter(lambda x: x[0] != x[1] and (x[0]== 0 or  x[1] == 0), 
-                                product([0, 1, -1], [0, 1, -1])):
-                pnt = chopper.add_tupl(d_tpl)
+            for pnt in chopper.surrounding_pnts():
                 if not pnt.is_bad(self._board._size) and \
                     self._board.get_at(*pnt.get()).get_char() not in [_ELEMENTS["DESTROY_WALL"], _ELEMENTS["WALL"]]:
                     ch_moves.append(pnt)
@@ -493,7 +538,7 @@ class DirectionSolver:
         self._next_choppers_moves = chopper_move
 
         for ch_move in chopper_move:
-            matrix[ch_move.get_y()][ch_move.get_x()]+= 2000
+            matrix[ch_move.get_y()][ch_move.get_x()]+= 5000
 
         future_blasts = self._board.get_future_blasts()
         if self._perks_info.get(Perk.IMMUNE) < 4:
@@ -520,12 +565,14 @@ class DirectionSolver:
             board = Board(board_string)
             self._board = board
             self._me = board.get_bomberman()
+            self._destroy_walls = set(board.get_destroy_walls())
+            self._walls = set(board.get_walls())
+
             self._other_players = board.get_other_bombermans()
             self._perks = board.get_perks()
             self._perks_info.update(self)
             self._bomb.update(self)
             self.choppers.update(self)
-            self._destroy_walls = board.get_destroy_walls()
 
             self._matrix = self._make_matrix()
             logger.info(self._board.to_string())
@@ -604,6 +651,7 @@ class DirectionSolver:
             self._panics = 0
             return NextMoves(ACT)
         panic_path = self.panic_path()
+        logger.debug(f"Panic path: {panic_path}")
         if panic_path:
             next_p = Point(*panic_path[1])
             return NextMoves(self.get_direction(self._me,next_p))
@@ -614,7 +662,12 @@ class DirectionSolver:
         dr = self.get_direction(self._me, next_point)
         logger.info(f"direct: {dr}")
         if self._mode.mode != Mode.PANIC:
-            if len(new_path) == 2:
+            self._panics = 0
+            path_is_straight = self.check_path_straight(new_path)
+            place_bomb = self._mode.mode in DESTROY_MODES and \
+                         path_is_straight and \
+                         len(new_path) - 1 <= BLAST_RANGE + self._perks_info.get_range()
+            if len(new_path) == 2 or place_bomb:
                 prev_mode = self._mode.mode
                 self._mode = None
                 if prev_mode in DESTROY_MODES:
@@ -626,7 +679,6 @@ class DirectionSolver:
                     return NextMoves(ACT, dr)
                 else:
                     return NextMoves(dr)
-            #path_is_straight = self.check_path_straight(new_path[:-1])
             SAFE_MOVES = 5
 
             if len(new_path) <= SAFE_MOVES and self._perks_info.get(Perk.IMMUNE) <= SAFE_MOVES:
@@ -713,7 +765,7 @@ class DirectionSolver:
                 next_move.do_act(after_move = False)
         logger.debug(f"Next moves with rc: {next_move}")
 
-        if is_immune or self.is_place_safe(next_point):
+        if self.is_place_safe(next_point):
             return next_move
         elif self.is_place_safe():
             return NextMoves()

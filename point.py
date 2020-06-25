@@ -56,11 +56,11 @@ class Point:
         dx, dy = self - other
         return abs(dx) + abs(dy)
 
-    def add_tupl(self, tpl):
-        return Point(self._x + tpl[0], self._y + tpl[1])
+    def surrounding_pnts(self):
+        return [Point(self._x + dx, self._y + dy) for  dx, dy in [(0,1), (0,-1), (-1,0), (1,0)]]
 
     def __hash__(self):
-        return hash(self.__key())
+        return 1000 * self._x + self._y
 
     def get_x(self):
         return self._x
