@@ -494,21 +494,13 @@ class DirectionSolver:
         return points
     
     def get_potential_chopper_moves(self):
-        return self.choppers._predicted_moves
         mad_choppers_moves = []
-        for mad_chopper in sefl.choppers.mad_choppers:
+        for mad_chopper in self.choppers.mad_choppers:
             for pnt in mad_chopper.surrounding_pnts():
                 if not pnt.is_bad(self._board._size):
                     mad_choppers_moves.append(pnt)
-
-        choppers = self.choppers._choppers.union(mad_choppers_moves)
-        ch_moves = []
-        for chopper in choppers:
-            for pnt in chopper.surrounding_pnts():
-                if not pnt.is_bad(self._board._size) and \
-                    self._board.get_at(*pnt.get()).get_char() not in [_ELEMENTS["DESTROY_WALL"], _ELEMENTS["WALL"]]:
-                    ch_moves.append(pnt)
-        return ch_moves
+        logger.debug(f"Mad choppers moves:{mad_choppers_moves}")
+        return set(self.choppers._predicted_moves).union(mad_choppers_moves).union(self.choppers._choppers)
 
     def get_near_perks(self):
         PERK_RADIUS = 8
