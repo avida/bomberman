@@ -704,7 +704,8 @@ class DirectionSolver:
     @get_deco
     def get(self, board_string):
 
-        if self._board.get_at(*self._me.get()).get_char() == _ELEMENTS["DEAD_BOMBERMAN"]:
+        if self._board.get_at(*self._me.get()).get_char() == _ELEMENTS["DEAD_BOMBERMAN"] or \
+           not self._destroy_walls:
             logger.info("game over")
             self._prev_players_num = 0
             self._bomb.reset()
@@ -743,7 +744,9 @@ class DirectionSolver:
         logger.info(f"Current mode is {self._mode}, {new_path}")
 
         
-        if not self._mode or not new_path:
+        if not self._mode or \
+           not new_path or \
+           all([pnt in self._bomb.danger for pnt in new_path]):
             return self.start_panic()
         else:
             self._panics = 0
