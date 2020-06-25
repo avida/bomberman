@@ -412,7 +412,8 @@ class DirectionSolver:
             #place not in self._board.get_barriers() and \
             if not place.is_bad(self._board._size) and \
                 place not in self.choppers._predicted_moves and \
-                place not in self._future_blasts:
+                place not in self._future_blasts and \
+                place not in self._bomb.danger:
                 places.append(place)
         places = sorted(places, key = lambda x: x.distance(self._me), reverse = True)
         return places
